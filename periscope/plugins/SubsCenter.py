@@ -59,7 +59,7 @@ class SubsCenter(SubtitleDatabase.SubtitleDB):
         ''' makes a query and returns info (link, lang) about found subtitles'''
         sublinks = []
         name = name.lower().replace(" ", "-")
-        searchurl = "%s/he/%s/%s/%s" %(self.host, name, season, episode)
+        searchurl = "%s/he/subtitle/series/%s/%s/%s" %(self.host, name, season, episode)
         content = self.downloadContent(searchurl, 10)
         if not content:
             return sublinks
