@@ -17,7 +17,7 @@
 #    along with emesene; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
-from SubCenter.org import SubCenter
+from SubsCenter.org import SubsCenter
 from OpenSubtitles import OpenSubtitles
 from Subtitulos import Subtitulos
 from Podnapisi import Podnapisi
