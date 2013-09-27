@@ -20,7 +20,7 @@
 #    along with periscope; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
-import zipfile, os, urllib2, urllib, logging, traceback, httplib, re
+import zipfile, os, urllib2, urllib, logging, traceback, httplib, re, json
 from BeautifulSoup import BeautifulSoup
 
 import SubtitleDatabase
@@ -49,6 +49,9 @@ class SubsCenter(SubtitleDatabase.SubtitleDB):
         if guessedData['type'] == 'tvshow':
             subs = self.query(guessedData['name'], guessedData['season'], guessedData['episode'], guessedData['teams'], langs)
             return subs
+        elif guessedData['type'] == 'movie':
+             subs = self.query(guessedData['name'], langs)
+             return subs
         else:
             return []
     
@@ -56,13 +59,13 @@ class SubsCenter(SubtitleDatabase.SubtitleDB):
         ''' makes a query and returns info (link, lang) about found subtitles'''
         sublinks = []
         name = name.lower().replace(" ", "-")
-        searchurl = "%s/%s/%sx%s" %(self.host, name, season, episode)
+        searchurl = "he/%s/%s/%s/%s" %(self.host, name, season, episode)
         content = self.downloadContent(searchurl, 10)
         if not content:
             return sublinks
         
         soup = BeautifulSoup(content)
-        for subs in soup("div", {"id":"version"}):
+        for subs in soup("div", {"id":"subsDownloadWindow"}):
             version = subs.find("p", {"class":"title-sub"})
             subteams = self.release_pattern.search("%s"%version.contents[1]).group(1).lower()            
             teams = set(teams)
