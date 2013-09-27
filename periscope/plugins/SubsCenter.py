@@ -65,6 +65,9 @@ class SubsCenter(SubtitleDatabase.SubtitleDB):
             return sublinks
         
         soup = BeautifulSoup(content)
+        script = soup.find('script', text=re.compile('subtitles_groups'))
+        subtitles_groups = json.loads(re.search(r'^\s*subtitles_groups\s*=\s*({.*?})\s*;\s*$', script.string, flags=re.DOTALL | re.MULTILINE).group(1))
+        log.debug("Data: %s" %json.dumps(subtitles_groups))
         for subs in soup("div", {"id":"subsDownloadWindow"}):
             version = subs.find("p", {"class":"title-sub"})
             subteams = self.release_pattern.search("%s"%version.contents[1]).group(1).lower()            
