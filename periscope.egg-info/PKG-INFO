@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: periscope
+Version: dev
+Summary: Python module to download subtitles for a given video file
+Home-page: http://code.google.com/p/periscope/
+Author: Patrick Dessalle
+Author-email: patrick.dessalle@gmail.com
+License: GNU LGPL
+Description: UNKNOWN
+Platform: UNKNOWN

@@ -28,18 +28,20 @@ import SubtitleDatabase
 log = logging.getLogger(__name__)
 
 LANGUAGES = {u"Hebrew" : "he",
-             u"English" : "en"}
+                         u"English" : "en"}
 
 class SubsCenter(SubtitleDatabase.SubtitleDB):
     url = "http://www.subscenter.org"
     site_name = "SubsCenter.org"
+    
+    URL_SEARCH_PATTERN = "%s/he/subtitle/search/?q=%s"
+    URL_SHOW_PATTERN = "%s%s%s/%s"
+    URL_MOVIE_PATTERN = "%s%s"
+    URL_DOWNLOAD_PATTERN = "%s/he/subtitle/download/he/%s/?v=%s&key=%s"
 
     def __init__(self, config, cache_folder_path):
         super(SubsCenter, self).__init__(langs=None,revertlangs=LANGUAGES)
-        #http://www.subtitulos.es/dexter/4x01
-        self.host = "http://www.subscenter.org"
-        self.release_pattern = re.compile("Versi&oacute;n (.+) ([0-9]+).([0-9])+ megabytes")
-        
+        self.host = "http://www.subscenter.org"       
 
     def process(self, filepath, langs):
         ''' main method to call on the plugin, pass the filename and the wished 
@@ -47,68 +49,104 @@ class SubsCenter(SubtitleDatabase.SubtitleDB):
         fname = unicode(self.getFileName(filepath).lower())
         guessedData = self.guessFileData(fname)
         if guessedData['type'] == 'tvshow':
-            subs = self.query(guessedData['name'], guessedData['season'], guessedData['episode'], guessedData['teams'], langs)
+            subs = self.query(fname, guessedData, langs)
             return subs
         elif guessedData['type'] == 'movie':
-             subs = self.query(guessedData['name'], langs)
+             subs = self.query(fname, guessedData, langs)
              return subs
         else:
             return []
     
-    def query(self, name, season, episode, teams, langs=None):
+    def query(self, fname, meta, langs):
         ''' makes a query and returns info (link, lang) about found subtitles'''
         sublinks = []
-        name = name.lower().replace(" ", "-")
-        searchurl = "%s/he/subtitle/series/%s/%s/%s" %(self.host, name, season, episode)
-        content = self.downloadContent(searchurl, 10)
-        if not content:
+        name = re.sub(r'\s+', ' ', meta['name'].replace('and','').replace('.',' ')).lower().strip().replace(" ", "+")
+        searchurl = self.URL_SEARCH_PATTERN %(self.host, name)
+        log.debug("Search URL: %s", searchurl)
+        try:
+            res = urllib2.urlopen(searchurl)
+            content = res.read()
+            resurl = res.geturl()
+        except urllib2.HTTPError as inst:
+            logging.debug("Error : %s for %s" % (searchurl, inst))
             return sublinks
         
-        soup = BeautifulSoup(content)
-        script = soup.find('script', text=re.compile('subtitles_groups'))
-        subtitles_groups = json.loads(re.search(r'^\s*subtitles_groups\s*=\s*({.*?})\s*;\s*$', script.string, flags=re.DOTALL | re.MULTILINE).group(1))
-        log.debug("Data: %s" %json.dumps(subtitles_groups))
-        for subs in soup("div", {"id":"subsDownloadWindow"}):
-            version = subs.find("p", {"class":"title-sub"})
-            subteams = self.release_pattern.search("%s"%version.contents[1]).group(1).lower()            
-            teams = set(teams)
-            subteams = self.listTeams([subteams], [".", "_", " ", "/"])
-            
-            log.debug("Team from website: %s" %subteams)
-            log.debug("Team from file: %s" %teams)
-
-            nexts = subs.findAll("ul", {"class":"sslist"})
-            for lang_html in nexts:
-                langLI = lang_html.findNext("li",{"class":"li-idioma"} )
-                lang = self.getLG(langLI.find("strong").contents[0].string.strip())
+        if not content: # no results
+            return sublinks
+        elif resurl != searchurl: # one result, redirect
+            matchurl = resurl
+        else: # multiple search results
+            soup = BeautifulSoup(content)
+            matches = []
+            for match in soup("div", {"class": "generalWindowRight"}):
+                if not match.a: return sublinks
+                if meta['type'].replace("tvshow", "series") in match.a.get('href'):
+                    log.debug("Match: %s", match.a.get('href'))
+                    matches.append(match.a.get('href'))
+            if len(matches) == 0 or len(matches) > 8: # too many, or non
+                return sublinks
+            elif len(matches) == 1: # only one rsult
+                matchurl = matches[0]
+            else: # multiple results, match with iMDB
+                fimdbid = self.getImdb(meta['name'], meta['type'])
+                for match in matches:
+                    content = self.downloadContent("%s%s" %(self.host, match), 10)
+                    if not content: continue
+                    soup = BeautifulSoup(content)
+                    simdbid = soup('a', href=re.compile('imdb'))[0].get('href')
+                    if fimdbid in simdbid:
+                        log.debug("Match for %s: %s (imdb) %s (subs)" %(meta['name'], fimdbid, simdbid))
+                        matchurl = match
+                        break
+                    else:
+                        log.debug("No match for %s: %s (imdb) %s (subs)" %(meta['name'], fimdbid, simdbid))
         
-                statusLI = lang_html.findNext("li",{"class":"li-estado green"} )
-                status = statusLI.contents[0].string.strip()
-
-                link = statusLI.findNext("span", {"class":"descargar green"}).find("a")["href"]
-                if status == "Completado" and subteams.issubset(teams) and (not langs or lang in langs) :
-                    result = {}
-                    result["release"] = "%s.S%.2dE%.2d.%s" %(name.replace("-", ".").title(), int(season), int(episode), '.'.join(subteams))
-                    result["lang"] = lang
-                    result["link"] = link
-                    result["page"] = searchurl
-                    sublinks.append(result)
+        if not matchurl: return sublinks
+        if meta['type'] == 'tvshow':
+            suburl = self.URL_SHOW_PATTERN %(self.host, matchurl, meta['season'], meta['episode'])
+        else:
+            suburl = self.URL_MOVIE_PATTERN %(self.host, matchurl)
+        
+        log.debug("Sub URL: %s", suburl)
+        content = self.downloadContent(suburl, 10)
+        if not content: return sublinks
+        subs_json = re.compile('subtitles_groups = ({.*?})\s', re.DOTALL)
+        subs_data = subs_json.search(content)
+        try:
+            subs = json.loads(subs_data.group(1))
+        except:
+            log.debug("subtitles_groups parsing error")
+            return sublinks
+        for lkey, lang in subs.items():
+            if langs and not lkey in langs:
+                continue
+            for skey,subbers in lang.items():
+                for qkey,quality in subbers.items():
+                    for qsub,sub in quality.items():
+                        releaseMeta = self.guessFileData(sub['subtitle_version'])
+                        teams = set([t.replace('[','').replace(']','') for t in meta['teams']])
+                        subTeams = set(releaseMeta['teams'])
+                        result = {}
+                        result["release"] = sub["subtitle_version"]
+                        result["lang"] = lkey
+                        result["link"] = self.URL_DOWNLOAD_PATTERN %(self.host, sub['id'], sub['subtitle_version'], sub['key'])
+                        result["page"] = searchurl
+                        if result['release'].startswith(fname) or (releaseMeta['name'].replace('.',' ').replace(':','').replace('-','').strip() == meta['name'].replace('.',' ').replace(':','').replace('-','').strip() and (teams.issubset(subTeams) or subTeams.issubset(teams))):
+                            sublinks.append(result)
                 
         return sublinks
+    def getImdb (self, title, type):
+        '''Get iMDB ID'''
+        searchurl = "http://mymovieapi.com/?q=%s&mt=%s&episode=0" %(title, type.replace("tvshow","TVS").replace("movie","M"))
+        content = self.downloadContent(searchurl, 10)
+        if not content: return ""
+        try:
+            data = eval(content)
+        except:
+            log.debug("iMDB parsing error for URL: %s", searchurl)
+            return ""
+        return data[0]['imdb_id']
         
-    def listTeams(self, subteams, separators):
-        teams = []
-        for sep in separators:
-            subteams = self.splitTeam(subteams, sep)
-        log.debug(subteams)
-        return set(subteams)
-    
-    def splitTeam(self, subteams, sep):
-        teams = []
-        for t in subteams:
-            teams += t.split(sep)
-        return teams
-
     def createFile(self, subtitle):
         '''pass the URL of the sub and the file it matches, will unzip it
         and return the path to the created file'''

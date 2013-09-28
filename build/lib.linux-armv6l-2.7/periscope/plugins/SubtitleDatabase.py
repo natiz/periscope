@@ -37,7 +37,7 @@ class SubtitleDB(object):
             self.langs = dict(map(lambda item: (item[1],item[0]), self.revertlangs.items()))
         self.tvshowRegex = re.compile('(?P<show>.*)S(?P<season>[0-9]{2})E(?P<episode>[0-9]{2}).(?P<teams>.*)', re.IGNORECASE)
         self.tvshowRegex2 = re.compile('(?P<show>.*).(?P<season>[0-9]{1,2})x(?P<episode>[0-9]{1,2}).(?P<teams>.*)', re.IGNORECASE)
-        self.movieRegex = re.compile('(?P<movie>.*)[\.|\[|\(| ]{1}(?P<year>(?:(?:19|20)[0-9]{2}))[\.|\]|\)| ]{1}\s*(?P<teams>.*)', re.IGNORECASE)
+        self.movieRegex = re.compile('(?P<movie>.*)[\.|\[|\(| ]{1}(?P<year>(?:(?:19|20)[0-9]{2}))(?P<teams>.*)', re.IGNORECASE)
 
     def searchInThread(self, queue, filename, langs):
         ''' search subtitles with the given filename for the given languages'''
@@ -158,8 +158,6 @@ class SubtitleDB(object):
             matches_tvshow = self.tvshowRegex2.match(filename)
             if matches_tvshow:
                 (tvshow, season, episode, teams) = matches_tvshow.groups()
-                print "rls teams:"
-                print teams
                 tvshow = tvshow.replace(".", " ").strip()
                 teams = teams.split('.')
                 return {'type' : 'tvshow', 'name' : tvshow.strip(), 'season' : int(season), 'episode' : int(episode), 'teams' : teams}

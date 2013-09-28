@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
-#   This file is part of periscope.
+#   This file was developed for periscope
+#   By Nati Ziv
+#   
+#   Periscope
 #   Copyright (c) 2008-2011 Patrick Dessalle <patrick@dessalle.be>
 #
 #    periscope is free software; you can redistribute it and/or modify
@@ -17,32 +20,25 @@
 #    along with periscope; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
-import zipfile, os, urllib2, urllib, logging, traceback, httplib, re
+import zipfile, os, urllib2, urllib, logging, traceback, httplib, re, json
 from BeautifulSoup import BeautifulSoup
 
 import SubtitleDatabase
 
-LANGUAGES = {u"English (US)" : "en",
-             u"English (UK)" : "en",
-             u"English" : "en",
-             u"French" : "fr",
-             u"Brazilian" : "pt-br",
-             u"Portuguese" : "pt",
-             u"Español (Latinoamérica)" : "es",
-             u"Español (España)" : "es",
-             u"Español" : "es",
-             u"Italian" : "it",
-             u"Català" : "ca"}
+log = logging.getLogger(__name__)
 
-class SubsWiki(SubtitleDatabase.SubtitleDB):
-    url = "http://www.subswiki.com"
-    site_name = "SubsWiki"
+LANGUAGES = {u"Hebrew" : "he",
+             u"English" : "en"}
 
-    def __init__(self, config, config_folder_path):
-        super(SubsWiki, self).__init__(langs=None,revertlangs=LANGUAGES)
-        #http://www.subswiki.com/serie/Dexter/4/1/
-        self.host = "http://www.subswiki.com"
-        self.release_pattern = re.compile("\nVersion (.+), ([0-9]+).([0-9])+ MBs")
+class SubsCenter(SubtitleDatabase.SubtitleDB):
+    url = "http://www.subscenter.org"
+    site_name = "SubsCenter.org"
+
+    def __init__(self, config, cache_folder_path):
+        super(SubsCenter, self).__init__(langs=None,revertlangs=LANGUAGES)
+        #http://www.subtitulos.es/dexter/4x01
+        self.host = "http://www.subscenter.org"
+        self.release_pattern = re.compile("Versi&oacute;n (.+) ([0-9]+).([0-9])+ megabytes")
         
 
     def process(self, filepath, langs):
@@ -53,53 +49,48 @@ class SubsWiki(SubtitleDatabase.SubtitleDB):
         if guessedData['type'] == 'tvshow':
             subs = self.query(guessedData['name'], guessedData['season'], guessedData['episode'], guessedData['teams'], langs)
             return subs
+        elif guessedData['type'] == 'movie':
+             subs = self.query(guessedData['name'], langs)
+             return subs
         else:
             return []
     
     def query(self, name, season, episode, teams, langs=None):
         ''' makes a query and returns info (link, lang) about found subtitles'''
         sublinks = []
-        name = name.lower().replace(" ", "_")
-        searchurl = "%s/serie/%s/%s/%s/" %(self.host, name, season, episode)
-        logging.debug("dl'ing %s" %searchurl)
-        try:
-            page = urllib2.urlopen(searchurl)
-            ''' test if no redirect was made '''
-            if page.geturl() != searchurl :
-                return sublinks
-        except urllib2.HTTPError as inst:
-            logging.debug("Error : %s for %s" % (searchurl, inst))
+        name = name.lower().replace(" ", "-")
+        searchurl = "%s/he/subtitle/series/%s/%s/%s" %(self.host, name, season, episode)
+        content = self.downloadContent(searchurl, 10)
+        if not content:
             return sublinks
         
-        soup = BeautifulSoup(page)
-        for subs in soup("td", {"class":"NewsTitle"}):
-            subteams = subs.findNext("b").string.lower()            
+        soup = BeautifulSoup(content)
+        script = soup.find('script', text=re.compile('subtitles_groups'))
+        subtitles_groups = json.loads(re.search(r'^\s*subtitles_groups\s*=\s*({.*?})\s*;\s*$', script.string, flags=re.DOTALL | re.MULTILINE).group(1))
+        log.debug("Data: %s" %json.dumps(subtitles_groups))
+        for subs in soup("div", {"id":"subsDownloadWindow"}):
+            version = subs.find("p", {"class":"title-sub"})
+            subteams = self.release_pattern.search("%s"%version.contents[1]).group(1).lower()            
             teams = set(teams)
-            subteams = self.listTeams([subteams], [".", "_", " ", " y "])
+            subteams = self.listTeams([subteams], [".", "_", " ", "/"])
             
-            #logging.debug("Team from website: %s" %subteams)
-            #logging.debug("Team from file: %s" %teams)
-            
-            #langs_html = subs.findNext("td", {"class" : "language"})
-            #lang = self.getLG(langs_html.string.strip())
-            
-            nexts = subs.parent.parent.findAll("td", {"class" : "language"})
-            for langs_html in nexts:
-                lang = self.getLG(langs_html.string.strip())
-                #logging.debug("lang: %s" %lang)
-                
-                statusTD = langs_html.findNext("td")
-                status = statusTD.find("strong").string.strip()
-                #logging.debug("status: %s" %status)
+            log.debug("Team from website: %s" %subteams)
+            log.debug("Team from file: %s" %teams)
 
-                link = statusTD.findNext("td").find("a")["href"]
+            nexts = subs.findAll("ul", {"class":"sslist"})
+            for lang_html in nexts:
+                langLI = lang_html.findNext("li",{"class":"li-idioma"} )
+                lang = self.getLG(langLI.find("strong").contents[0].string.strip())
+        
+                statusLI = lang_html.findNext("li",{"class":"li-estado green"} )
+                status = statusLI.contents[0].string.strip()
 
-                if status == "Completed" and subteams.issubset(teams) and (not langs or lang in langs) :
+                link = statusLI.findNext("span", {"class":"descargar green"}).find("a")["href"]
+                if status == "Completado" and subteams.issubset(teams) and (not langs or lang in langs) :
                     result = {}
-                    result["release"] = "%s.S%.2dE%.2d.%s" %(name.replace("-", ".").title(), int(season), int(episode), '.'.join(subteams)
-    )
+                    result["release"] = "%s.S%.2dE%.2d.%s" %(name.replace("-", ".").title(), int(season), int(episode), '.'.join(subteams))
                     result["lang"] = lang
-                    result["link"] = self.host + link
+                    result["link"] = link
                     result["page"] = searchurl
                     sublinks.append(result)
                 
@@ -109,7 +100,7 @@ class SubsWiki(SubtitleDatabase.SubtitleDB):
         teams = []
         for sep in separators:
             subteams = self.splitTeam(subteams, sep)
-        logging.debug(subteams)
+        log.debug(subteams)
         return set(subteams)
     
     def splitTeam(self, subteams, sep):
